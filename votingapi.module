@@ -11,6 +11,75 @@
  */
 
 /**
+ * Model class for votingapi_vote table.
+ */
+class VotingApi_Vote {
+  public $vote_id     = NULL;
+  public $entity_type = 'node';
+  public $entity_id   = NULL;
+  public $value_type  = 'percent';
+  public $value       = NULL;
+  public $tag         = 'vote';
+  public $uid         = NULL; // defaults to current user
+  public $vote_source = NULL; // defaults to current IP
+  public $timestamp   = REQUEST_TIME;
+  
+  public function __construct($data) {
+    foreach ($data as $k => $v) {
+      $this->$k = $v;
+    }
+    $this->uid         = is_null($this->uid) ? $GLOBALS['user']->uid : $this->uid;
+    $this->vote_source = is_null($this->vote_source) ? ip_address() : $this->vote_source;
+  }
+}
+
+/**
+ * Criteria to select VotingApi_Votes
+ *
+ * This is basically the same as VotingApi_Vote except that
+ * timestamp is interpreted as the vote-rollover.
+ *
+ * All other keys are skipped if vote_id is set.
+ */
+class VotingApi_Criteria extends VotingApi_Vote {
+  public function __construct($data) {
+    parent::__construct($data);
+ 
+    if ($this->uid != 0) {
+      $this->vote_source = NULL;
+    }
+  }
+}
+
+class VotingApi_Result {
+  public $vote_cache_id = NULL;
+  public $entity_type = 'node';
+  public $entity_id   = NULL;
+  public $value_type  = 'percent';
+  public $value       = NULL;
+  public $tag         = 'vote';
+  public $function    = NULL;
+  public $timestamp   = REQUEST_TIME;
+  
+  public function __construct($data) {
+    foreach ($data as $k => $v) {
+      $this->$k = $v;
+    }
+  }
+}
+
+/**
+ * Criteria to select VotingApi_Results
+ *
+ * This is basically the same as VotingApi_Result except that
+ * timestamp is interpreted as the vote-rollover.
+ *
+ * All other keys are skipped if vote_cache_id is set.
+ */
+class VotingApi_ResultCriteria extends VotingApi_Result {
+}
+ 
+/**
  * Implements of hook_menu().
  */
 function votingapi_menu() {
@@ -92,31 +161,12 @@ function votingapi_cron() {
  * Modules that need more explicit control can call votingapi_add_votes() and
  * manage the deletion/recalculation tasks manually.
  *
- * @param $votes
- *   An array of votes, each with the following structure:
- *   $vote['entity_type']  (Optional, defaults to 'node')
- *   $vote['entity_id']    (Required)
- *   $vote['value_type']    (Optional, defaults to 'percent')
- *   $vote['value']         (Required)
- *   $vote['tag']           (Optional, defaults to 'vote')
- *   $vote['uid']           (Optional, defaults to current user)
- *   $vote['vote_source']   (Optional, defaults to current IP)
- *   $vote['timestamp']     (Optional, defaults to REQUEST_TIME)
- * @param $criteria
- *   A keyed array used to determine what votes will be deleted when the current
- *   vote is cast. If no value is specified, all votes for the current content
- *   by the current user will be reset. If an empty array is passed in, no votes
- *   will be reset and all incoming votes will be saved IN ADDITION to existing
- *   ones.
- *   $criteria['vote_id']     (If this is set, all other keys are skipped)
- *   $criteria['entity_type']
- *   $criteria['entity_type']
- *   $criteria['value_type']
- *   $criteria['tag']
- *   $criteria['uid']
- *   $criteria['vote_source']
- *   $criteria['timestamp']   (If this is set, records with timestamps
- *      GREATER THAN the set value will be selected.)
+ * @param $votes An array of (or a single) VotingApi_Vote objects
+ * @param $criteria An array of (or a single) VotingApi_Criteria objects used to determine what
+ *   votes will be deleted when the current vote is cast. If no value is specified,
+ *   all votes for the current content by the current user will be reset. If an empty object is
+ *   passed in, no votes will be reset and all incoming votes will be saved IN ADDITION to
+ *   existing ones.
  * @return
  *   An array of vote result records affected by the vote. The values are
  *   contained in a nested array keyed thusly:
@@ -127,7 +177,7 @@ function votingapi_cron() {
  */
 function votingapi_set_votes(&$votes, $criteria = NULL) {
   $touched = array();
-  if (!empty($votes['entity_id'])) {
+  if (is_object($votes)) {
     $votes = array($votes);
   }
 
@@ -136,16 +186,14 @@ function votingapi_set_votes(&$votes, $criteria = NULL) {
     // If the calling function didn't explicitly set criteria for vote deletion,
     // build up the delete queries here.
     foreach ($votes as $vote) {
-      $tmp = $vote + votingapi_current_user_identifier();
-      if (isset($tmp['value'])) {
-        unset($tmp['value']);
+      $tmp = new VotingApi_Criteria($vote);
+      if (isset($tmp->value)) {
+        $tmp->value = NULL;
       }
       votingapi_delete_votes(votingapi_select_votes($tmp));
     }
-  }
-  elseif (is_array($criteria)) {
-    // The calling function passed in an explicit set of delete filters.
-    if (!empty($criteria['entity_id'])) {
+  } else {
+    if (is_object($criteria)) {
       $criteria = array($criteria);
     }
     foreach ($criteria as $c) {
@@ -153,16 +201,11 @@ function votingapi_set_votes(&$votes, $criteria = NULL) {
     }
   }
 
-  foreach ($votes as $key => $vote) {
-    _votingapi_prep_vote($vote);
-    $votes[$key] = $vote; // Is this needed? Check to see how PHP4 handles refs.
-  }
-
   // Cast the actual votes, inserting them into the table.
   votingapi_add_votes($votes);
 
   foreach ($votes as $vote) {
-    $touched[$vote['entity_type']][$vote['entity_id']] = TRUE;
+    $touched[$vote->entity_type][$vote->entity_id] = TRUE;
   }
 
   if (variable_get('votingapi_calculation_schedule', 'immediate') != 'cron') {
@@ -173,19 +216,6 @@ function votingapi_set_votes(&$votes, $criteria = NULL) {
     }
   }
   return $touched;
-}
-
-/**
- * Generate a proper identifier for the current user: if they have an account,
- * return their UID. Otherwise, return their IP address.
- */
-function votingapi_current_user_identifier() {
-  global $user;
-  $criteria = array('uid' => $user->uid);
-  if (!$user->uid) {
-    $criteria['vote_source'] = ip_address();
-  }
-  return $criteria;
 }
 
 /**
@@ -218,7 +248,9 @@ function votingapi_votingapi_storage_select_votes($criteria, $limit) {
   if (!empty($limit)) {
     $query->range(0, $limit);
   }
-  return $query->execute()->fetchAll(PDO::FETCH_ASSOC);
+  $result = $query->execute();
+  $result->fetchOptions['class_name'] = 'VotingApi_Vote';
+  return $result->fetchAll(PDO::FETCH_CLASS);
 }
 
 /**
@@ -232,16 +264,7 @@ function votingapi_votingapi_storage_select_votes($criteria, $limit) {
  * Remember that any module calling this function implicitly assumes responsibility
  * for calling votingapi_recalculate_results() when all votes have been inserted.
  *
- * @param $votes
- *   A vote or array of votes, each with the following structure:
- *   $vote['entity_type']  (Optional, defaults to 'node')
- *   $vote['entity_id']    (Required)
- *   $vote['value_type']    (Optional, defaults to 'percent')
- *   $vote['value']         (Required)
- *   $vote['tag']           (Optional, defaults to 'vote')
- *   $vote['uid']           (Optional, defaults to current user)
- *   $vote['vote_source']   (Optional, defaults to current IP)
- *   $vote['timestamp']     (Optional, defaults to REQUEST_TIME)
+ * @param $votes array of VotingApi_Vote instances
  * @return
  *   The same votes, with vote_id keys populated.
  *
@@ -249,14 +272,12 @@ function votingapi_votingapi_storage_select_votes($criteria, $limit) {
  * @see votingapi_recalculate_results()
  */
 function votingapi_add_votes(&$votes) {
-  if (!empty($votes['entity_id'])) {
+  if (is_object($votes)) {
     $votes = array($votes);
   }
   $function = variable_get('votingapi_storage_module', 'votingapi') . '_votingapi_storage_add_vote';
   foreach ($votes as $key => $vote) {
-    _votingapi_prep_vote($vote);
     $function($vote);
-    $votes[$key] = $vote;
   }
   module_invoke_all('votingapi_insert', $votes);
   return $votes;
@@ -270,23 +291,14 @@ function votingapi_add_votes(&$votes) {
  * little use for most third-party modules, unless they manually insert their
  * own result data.
  *
- * @param vote_results
- *   An array of vote results, each with the following properties:
- *   $vote_result['entity_type']
- *   $vote_result['entity_id']
- *   $vote_result['value_type']
- *   $vote_result['value']
- *   $vote_result['tag']
- *   $vote_result['function']
- *   $vote_result['timestamp']   (Optional, defaults to REQUEST_TIME)
+ * @param vote_results array of VotingApi_Result objects
  */
 function votingapi_add_results($vote_results = array()) {
-  if (!empty($vote_results['entity_id'])) {
+  if (is_object($vote_results)) {
     $vote_results = array($vote_results);
   }
 
   foreach ($vote_results as $vote_result) {
-    $vote_result['timestamp'] = REQUEST_TIME;
     drupal_write_record('votingapi_cache', $vote_result);
   }
 }
@@ -294,16 +306,14 @@ function votingapi_add_results($vote_results = array()) {
 /**
  * Delete votes from the database.
  *
- * @param $votes
- *   An array of votes to delete. Minimally, each vote must have the 'vote_id'
- *   key set.
+ * @param $votes An array of votes to delete. Each vote must have the 'vote_id' key set.
  */
 function votingapi_delete_votes($votes = array()) {
   if (!empty($votes)) {
     module_invoke_all('votingapi_delete', $votes);
     $vids = array();
     foreach ($votes as $vote) {
-      $vids[] = $vote['vote_id'];
+      $vids[] = $vote->vote_id;
     }
     $function = variable_get('votingapi_storage_module', 'votingapi') . '_votingapi_storage_delete_votes';
     $function($votes, $vids);
@@ -321,7 +331,7 @@ function votingapi_delete_results($vote_results = array()) {
   if (!empty($vote_results)) {
     $vids = array();
     foreach ($vote_results as $vote) {
-      $vids[] = $vote['vote_cache_id'];
+      $vids[] = $vote->vote_cache_id;
     }
     db_delete('votingapi_cache')->condition('vote_cache_id', $vids, 'IN')->execute();
   }
@@ -330,34 +340,24 @@ function votingapi_delete_results($vote_results = array()) {
 /**
  * Select individual votes from the database.
  *
- * @param $criteria
- *   A keyed array used to build the select query. Keys can contain
- *   a single value or an array of values to be matched.
- *   $criteria['vote_id']       (If this is set, all other keys are skipped)
- *   $criteria['entity_id']
- *   $criteria['entity_type']
- *   $criteria['value_type']
- *   $criteria['tag']
- *   $criteria['uid']
- *   $criteria['vote_source']
- *   $criteria['timestamp']   (If this is set, records with timestamps
- *      GREATER THAN the set value will be selected.)
+ * @param $criteria An object of type VotingApi_Criteria
  * @param $limit
  *   An optional integer specifying the maximum number of votes to return.
  * @return
  *   An array of votes matching the criteria.
  */
-function votingapi_select_votes($criteria = array(), $limit = 0) {
+function votingapi_select_votes($criteria = NULL, $limit = 0) {
+  if (!$criteria) $criteria = new VotingApi_Criteria();
   $window = -1;
-  if (empty($criteria['uid']) || $criteria['uid'] == 0) {
-    if (!empty($criteria['vote_source'])) {
+  if ($criteria->uid == 0) {
+    if (!empty($criteria->vote_source)) {
       $window = variable_get('votingapi_anonymous_window', 86400);
     }
   } else {
     $window = variable_get('votingapi_user_window', -1);
   }
   if ($window >= 0) {
-    $criteria['timestamp'] = REQUEST_TIME - $window;
+    $criteria->timestamp = REQUEST_TIME - $window;
   }
   $function = variable_get('votingapi_storage_module', 'votingapi') . '_votingapi_storage_select_votes';
   return $function($criteria, $limit);
@@ -366,17 +366,7 @@ function votingapi_select_votes($criteria = array(), $limit = 0) {
 /**
  * Select cached vote results from the database.
  *
- * @param $criteria
- *   A keyed array used to build the select query. Keys can contain
- *   a single value or an array of values to be matched.
- *   $criteria['vote_cache_id']     (If this is set, all other keys are skipped)
- *   $criteria['entity_id']
- *   $criteria['entity_type']
- *   $criteria['value_type']
- *   $criteria['tag']
- *   $criteria['function']
- *   $criteria['timestamp']   (If this is set, records with timestamps
- *      GREATER THAN the set value will be selected.)
+ * @param $criteria a VotingApi_ResultCriteria object
  * @param $limit
  *   An optional integer specifying the maximum number of votes to return.
  * @return
@@ -390,7 +380,9 @@ function votingapi_select_results($criteria = array(), $limit = 0) {
   if (!empty($limit)) {
     $query->range(0, $limit);
   }
-  return $query->execute()->fetchAll(PDO::FETCH_ASSOC);
+  $result = $query->execute();
+  $result->fetchOptions['class_name'] = 'VotingApi_Result';
+  return $result->fetchAll(PDO::FETCH_CLASS);
 }
 
 /**
@@ -434,14 +426,14 @@ function votingapi_recalculate_results($entity_type, $entity_id, $force_calculat
     foreach ($cache as $tag => $types) {
       foreach ($types as $type => $functions) {
         foreach ($functions as $function => $value) {
-          $cached[] = array(
+          $cached[] = new VotingApi_Result(array(
             'entity_type' => $entity_type,
             'entity_id' => $entity_id,
             'value_type' => $type,
             'value' => $value,
             'tag' => $tag,
             'function' => $function,
-          );
+          ));
         }
       }
     }
@@ -558,7 +550,7 @@ function votingapi_votingapi_storage_standard_results($entity_type, $entity_id) 
  */
 function votingapi_select_single_vote_value($criteria = array()) {
   if ($results = votingapi_select_votes($criteria, 1)) {
-    return $results[0]['value'];
+    return $results[0]->value;
   }
 }
 
@@ -567,31 +559,7 @@ function votingapi_select_single_vote_value($criteria = array()) {
  */
 function votingapi_select_single_result_value($criteria = array()) {
   if ($results = votingapi_select_results($criteria, 1)) {
-    return $results[0]['value'];
-  }
-}
-
-/**
- * Populate the value of any unset vote properties.
- *
- * @param $vote
- *   A single vote.
- * @return
- *   A vote object with all required properties filled in with
- *   their default values.
- */
-function _votingapi_prep_vote(&$vote) {
-  global $user;
-  if (empty($vote['prepped'])) {
-    $vote += array(
-      'entity_type' => 'node',
-      'value_type' => 'percent',
-      'tag' => 'vote',
-      'uid' => $user->uid,
-      'timestamp' => REQUEST_TIME,
-      'vote_source' => ip_address(),
-      'prepped' => TRUE
-    );
+    return $results[0]->value;
   }
 }
 
@@ -619,11 +587,8 @@ function _votingapi_delete_cache_by_entity($entity_ids, $type) {
     ->condition('entity_type', $type)
     ->condition('entity_id', $entity_ids)
     ->execute();
-  $votes = array();
-  foreach ($result as $row) {
-    $votes[]['vote_cache_id'] = $row->vote_cache_id;
-  }
-  votingapi_delete_results($votes);
+  $result->fetchOptions['class_name'] = 'VotingApi_Result';
+  votingapi_delete_results($result->fetchAll(PDO::FETCH_CLASS));
 }
 
 /**
@@ -638,11 +603,8 @@ function _votingapi_delete_votes_by_entity($entity_ids, $type) {
     ->condition('entity_type', $type)
     ->condition('entity_id', $entity_ids)
     ->execute();
-  $votes = array();
-  foreach ($result as $row) {
-    $votes[] = (array) $row;
-  }
-  votingapi_delete_votes($votes);
+  $result->fetchOptions['class_name'] = 'VotingApi_Vote';
+  votingapi_delete_votes($result->fetchAll(PDO::FETCH_CLASS));
 }
 
 /**

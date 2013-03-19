@@ -48,15 +48,15 @@ class VotingAPITestCase extends DrupalWebTestCase {
     $value = '85';
     // The minimum required fields according to the documentation are
     // entity_id and value.
-    $vote = array(
+    $vote = new VotingApi_Vote(array(
       'entity_id' => $nid,
       'value' => $value
-    );
+    ));
     try {
       $result = votingapi_add_votes($vote);
       // Test that the result has its fields set appropriately.
       $this->validateVote('testMinimalAdd()', $result, $nid, array($value));
-      $this->assertTrue(REQUEST_TIME - $result[0]['timestamp'] < 2, t('The timestamp should be less than 2 seconds ago.'));
+      $this->assertTrue(REQUEST_TIME - $result[0]->timestamp < 2, t('The timestamp should be less than 2 seconds ago.'));
     }
     catch (Exception $e) {
       $this->fail(t('Could not add a vote with only entity_id and value.'));
@@ -71,14 +71,15 @@ class VotingAPITestCase extends DrupalWebTestCase {
     global $user;
     $value = '7';
     $nid = variable_get('votingapi_nid1', NULL);
-    $vote = array('entity_id' => $nid,
+    $vote = new VotingApi_Vote(array('entity_id' => $nid,
       'value' => $value,
-      'entity_type' => 'node');
+      'entity_type' => 'node'
+    ));
     try {
       $result = votingapi_add_votes($vote);
       // Test that the result has its fields set appropriately.
       $this->validateVote("testAddVote()", $result, $nid, $value, 'node', $user->uid);
-      $this->assertTrue(REQUEST_TIME - $result[0]['timestamp'] < 2, t('The timestamp should be less than 2 seconds ago.'));
+      $this->assertTrue(REQUEST_TIME - $result[0]->timestamp < 2, t('The timestamp should be less than 2 seconds ago.'));
     }
     catch (Exception $e) {
       $this->fail('The votingapi_add_votes threw an error during the "votingapi_add_votes" call.');
@@ -102,11 +103,12 @@ class VotingAPITestCase extends DrupalWebTestCase {
     $votes = array();
     try {
       for ($index = 0; $index < count($values); $index++) {
-        $votes[$index] = array();
-        $votes[$index]['entity_type'] = 'node';
-        $votes[$index]['entity_id'] = $nid;
-        $votes[$index]['uid'] = $users[$index]->uid;
-        $votes[$index]['value'] = $values[$index];
+        $votes[$index] = new VotingApi_Vote(array(
+          'entity_type' => 'node',
+          'entity_id'   => $nid,
+          'uid'         => $users[$index]->uid,
+          'value'       => $values[$index],
+        ));
       }
       $result = votingapi_add_votes($votes);
       // Test that the result has its fields set appropriately.
@@ -129,14 +131,14 @@ class VotingAPITestCase extends DrupalWebTestCase {
     }
     $prefix_array = array('@prefix' => $prefix);
     for ($index = 0; $index < count($vote); $index++) {
-      $this->assertTrue($vote[$index]['entity_id'] == $entity_id, t('@prefix: entity_id should match.', $prefix_array));
-      $this->assertTrue($vote[$index]['value'] == $value[$index], t('@prefix: value should match.', $prefix_array));
-      $this->assertTrue($vote[$index]['entity_type'] == $entity_type, t('@prefix: entity_type should match, default = "node".', $prefix_array));
-      $this->assertTrue($vote[$index]['value_type'] == $value_type, t('@prefix: value_type should match, default= "percent".', $prefix_array));
-      $this->assertTrue($vote[$index]['tag'] == $tag, t('@prefix: tag should match, default =  "vote".', $prefix_array));
-      $this->assertTrue($vote[$index]['vote_source'] == $vote_source, t('@prefix: vote_source should match, default = ip address.', $prefix_array));
+      $this->assertTrue($vote[$index]->entity_id == $entity_id, t('@prefix: entity_id should match.', $prefix_array));
+      $this->assertTrue($vote[$index]->value == $value[$index], t('@prefix: value should match.', $prefix_array));
+      $this->assertTrue($vote[$index]->entity_type == $entity_type, t('@prefix: entity_type should match, default = "node".', $prefix_array));
+      $this->assertTrue($vote[$index]->value_type == $value_type, t('@prefix: value_type should match, default= "percent".', $prefix_array));
+      $this->assertTrue($vote[$index]->tag == $tag, t('@prefix: tag should match, default =  "vote".', $prefix_array));
+      $this->assertTrue($vote[$index]->vote_source == $vote_source, t('@prefix: vote_source should match, default = ip address.', $prefix_array));
       if ($uid != NULL) {
-        $this->assertTrue($vote[0]['uid'] == $uid, t('@prefix: uid should match.', $prefix_array));
+        $this->assertTrue($vote[0]->uid == $uid, t('@prefix: uid should match.', $prefix_array));
       }
     }
   }
@@ -154,30 +156,30 @@ class VotingAPITestCase extends DrupalWebTestCase {
       $average = $sum / $count;
       $prefix_array = array('@prefix' => $prefix);
       foreach ($votes as $summary) {
-        if ($summary['function'] == 'count') {
+        if ($summary->function == 'count') {
           $summary_desc = 'count summary';
           $prefix_array['@summary_desc'] = $summary_desc;
-          $this->assertTrue($summary['value'] == $count,
+          $this->assertTrue($summary->value == $count,
             t('@prefix: (@summary_desc) value should match the number of values.', $prefix_array));
         }
-        elseif ($summary['function'] == 'average') {
+        elseif ($summary->function == 'average') {
           $summary_desc = 'average summary';
           $prefix_array['@summary_desc'] = $summary_desc;
-          $this->assertTrue($summary['value'] == $average,
+          $this->assertTrue($summary->value == $average,
             t('@prefix: (@summary_desc) value should match the average of values', $prefix_array));
         }
         else {
-          $prefix_array['@summary'] = $summary['function'];
-          $prefix_array['@summary_desc'] = $summary['function'] . ' summary';
+          $prefix_array['@summary'] = $summary->function;
+          $prefix_array['@summary_desc'] = $summary->function . ' summary';
           $this->assertFalse(TRUE, t('@prefix: Unknown summary type @summary.', $prefix_array));
         }
-        $this->assertTrue($summary['entity_type'] == $entity_type,
+        $this->assertTrue($summary->entity_type == $entity_type,
           t('@prefix: (@summary_desc) entity_type should match, default = "node"', $prefix_array));
-      $this->assertTrue($summary['entity_id'] == $entity_id,
+      $this->assertTrue($summary->entity_id == $entity_id,
         t('@prefix: (@summary_desc) entity_id should match', $prefix_array));
-      $this->assertTrue($summary['value_type'] == $value_type,
+      $this->assertTrue($summary->value_type == $value_type,
         t('@prefix: (@summary_desc) value_type should match.', $prefix_array));
-      $this->assertTrue($summary['tag'] == $tag,
+      $this->assertTrue($summary->tag == $tag,
         t('@prefix: (@summary_desc) tag should match', $prefix_array));
     }
   }
