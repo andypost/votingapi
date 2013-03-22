@@ -24,6 +24,8 @@ class VotingApi_Vote {
   public $vote_source = NULL; // defaults to current IP
   public $timestamp   = REQUEST_TIME;
   
+  public static $saveFunction = NULL;
+  
   public function __construct($data) {
     foreach ($data as $k => $v) {
       $this->$k = $v;
@@ -31,7 +33,43 @@ class VotingApi_Vote {
     $this->uid         = is_null($this->uid) ? $GLOBALS['user']->uid : $this->uid;
     $this->vote_source = is_null($this->vote_source) ? ip_address() : $this->vote_source;
   }
+  
+  /**
+   * Save a collection of votes to the database.
+   *
+   * This function does most of the heavy lifting for VotingAPI the main
+   * votingapi_set_votes() function, but does NOT automatically triger re-tallying
+   * of results. As such, it's useful for modules that must insert their votes in
+   * separate batches without triggering unecessary recalculation.
+   *
+   * Remember that any module calling this function implicitly assumes responsibility
+   * for calling votingapi_recalculate_results() when all votes have been inserted.
+   *
+   * @param $votes array of VotingApi_Vote instances
+   * @return
+   *   The same votes, with vote_id keys populated.
+   *
+   * @see votingapi_set_votes()
+   * @see votingapi_recalculate_results()
+   */
+  public static function saveMultiple(&$votes) {
+    if (is_object($votes)) {
+      $votes = array($votes);
+    }
+    foreach ($votes as $key => $vote) {
+      $vote->save();
+    }
+    module_invoke_all('votingapi_insert', $votes);
+    return $votes;
+  }
+  
+  public function save() {
+    $function = &self::$saveFunction;
+    $function($this);
+  }
+
 }
+VotingApi_Vote::$saveFunction = variable_get('votingapi_storage_module', 'votingapi') . '_votingapi_storage_add_vote';
 
 /**
  * Criteria to select VotingApi_Votes
@@ -207,7 +245,7 @@ function votingapi_cron() {
  * content, saving the incoming votes, and re-tallying the results given the
  * new data.
  *
- * Modules that need more explicit control can call votingapi_add_votes() and
+ * Modules that need more explicit control can call VotingApi_Vote::saveMultiple() and
  * manage the deletion/recalculation tasks manually.
  *
  * @param $votes An array of (or a single) VotingApi_Vote objects
@@ -221,7 +259,7 @@ function votingapi_cron() {
  *   contained in a nested array keyed thusly:
  *   $value = $results[$entity_type][$entity_id][$tag][$value_type][$function]
  *
- * @see votingapi_add_votes()
+ * @see VotingApi_Vote::saveMultiple()
  * @see votingapi_recalculate_results()
  */
 function votingapi_set_votes(&$votes, $criteria = NULL) {
@@ -251,7 +289,7 @@ function votingapi_set_votes(&$votes, $criteria = NULL) {
   }
 
   // Cast the actual votes, inserting them into the table.
-  votingapi_add_votes($votes);
+  VotingApi_Vote::saveMultiple($votes);
 
   foreach ($votes as $vote) {
     $touched[$vote->entity_type][$vote->entity_id] = TRUE;
@@ -302,35 +340,6 @@ function votingapi_votingapi_storage_select_votes($criteria, $limit) {
   return $result->fetchAll(PDO::FETCH_CLASS);
 }
 
-/**
- * Save a collection of votes to the database.
- *
- * This function does most of the heavy lifting for VotingAPI the main
- * votingapi_set_votes() function, but does NOT automatically triger re-tallying
- * of results. As such, it's useful for modules that must insert their votes in
- * separate batches without triggering unecessary recalculation.
- *
- * Remember that any module calling this function implicitly assumes responsibility
- * for calling votingapi_recalculate_results() when all votes have been inserted.
- *
- * @param $votes array of VotingApi_Vote instances
- * @return
- *   The same votes, with vote_id keys populated.
- *
- * @see votingapi_set_votes()
- * @see votingapi_recalculate_results()
- */
-function votingapi_add_votes(&$votes) {
-  if (is_object($votes)) {
-    $votes = array($votes);
-  }
-  $function = variable_get('votingapi_storage_module', 'votingapi') . '_votingapi_storage_add_vote';
-  foreach ($votes as $key => $vote) {
-    $function($vote);
-  }
-  module_invoke_all('votingapi_insert', $votes);
-  return $votes;
-}
 
 /**
  * Save a bundle of vote results to the database.

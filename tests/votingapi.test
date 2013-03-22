@@ -53,7 +53,7 @@ class VotingAPITestCase extends DrupalWebTestCase {
       'value' => $value
     ));
     try {
-      $result = votingapi_add_votes($vote);
+      $result = VotingApi_Vote::saveMultiple($vote);
       // Test that the result has its fields set appropriately.
       $this->validateVote('testMinimalAdd()', $result, $nid, array($value));
       $this->assertTrue(REQUEST_TIME - $result[0]->timestamp < 2, t('The timestamp should be less than 2 seconds ago.'));
@@ -76,13 +76,13 @@ class VotingAPITestCase extends DrupalWebTestCase {
       'entity_type' => 'node'
     ));
     try {
-      $result = votingapi_add_votes($vote);
+      $result = VotingApi_Vote::saveMultiple($vote);
       // Test that the result has its fields set appropriately.
       $this->validateVote("testAddVote()", $result, $nid, $value, 'node', $user->uid);
       $this->assertTrue(REQUEST_TIME - $result[0]->timestamp < 2, t('The timestamp should be less than 2 seconds ago.'));
     }
     catch (Exception $e) {
-      $this->fail('The votingapi_add_votes threw an error during the "votingapi_add_votes" call.');
+      $this->fail('The VotingApi_Vote::saveMultiple threw an error.');
       return;
     }
     // Load the vote back in and verify it matches.
@@ -110,12 +110,12 @@ class VotingAPITestCase extends DrupalWebTestCase {
           'value'       => $values[$index],
         ));
       }
-      $result = votingapi_add_votes($votes);
+      $result = VotingApi_Vote::saveMultiple($votes);
       // Test that the result has its fields set appropriately.
       $this->validateVote("testAddMultipleVotes()", $result, $nid, $values);
     }
     catch (Exception $e) {
-      $this->fail('The votingapi_add_votes threw an error during the "votingapi_add_votes" call.');
+      $this->fail('The VotingApi_Vote::saveMultiple threw an error.');
       return;
     }
     // Load the vote back in and verify it matches.
