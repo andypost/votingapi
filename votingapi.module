@@ -38,8 +38,6 @@ class VotingApi_Vote {
  *
  * This is basically the same as VotingApi_Vote except that
  * timestamp is interpreted as the vote-rollover.
- *
- * All other keys are skipped if vote_id is set.
  */
 class VotingApi_Criteria extends VotingApi_Vote {
   public function __construct($data) {
@@ -48,6 +46,38 @@ class VotingApi_Criteria extends VotingApi_Vote {
     if ($this->uid != 0) {
       $this->vote_source = NULL;
     }
+    
+    $this->calculateWindow();
+  }
+  
+  /**
+   * Calculate the correct timestamp for the vote-rollover.
+   */
+  protected function calculateWindow() {
+    $window = -1;
+    if ($this->uid == 0) {
+      if (!empty($this->vote_source)) {
+        $window = variable_get('votingapi_anonymous_window', 86400);
+      }
+    } else {
+      $window = variable_get('votingapi_user_window', -1);
+    }
+    if ($window >= 0) {
+      $this->timestamp = REQUEST_TIME - $window;
+    }
+  }
+  
+  /**
+   * Select individual votes from the database.
+   *
+   * @param $limit
+   *   An optional integer specifying the maximum number of votes to return.
+   * @return
+   *   An array of votes matching the criteria.
+   */
+  public function selectVotes($limit = 0) {
+    $function = variable_get('votingapi_storage_module', 'votingapi') . '_votingapi_storage_select_votes';
+    return $function($this, $limit);
   }
 }
 
@@ -73,10 +103,31 @@ class VotingApi_Result {
  *
  * This is basically the same as VotingApi_Result except that
  * timestamp is interpreted as the vote-rollover.
- *
- * All other keys are skipped if vote_cache_id is set.
  */
 class VotingApi_ResultCriteria extends VotingApi_Result {
+  /**
+   * Select cached vote results from the database.
+   *
+   * @param $limit
+   *   An optional integer specifying the maximum number of votes to return.
+   * @return
+   *   An array of vote results matching the criteria.
+   */
+  function selectResults($limit = 0) {
+    $query = db_select('votingapi_cache')->fields('votingapi_cache');
+    foreach ($this as $key => $value) {
+      if (!isset($value))
+        continue;
+      $query->condition($key, $value, is_array($value) ? 'IN' : '=');
+    }
+    if (!empty($limit)) {
+      $query->range(0, $limit);
+    }
+    $result = $query->execute();
+    $result->fetchOptions['class_name'] = 'VotingApi_Result';
+    return $result->fetchAll(PDO::FETCH_CLASS);
+  }
+
 }
  
 /**
@@ -188,14 +239,14 @@ function votingapi_set_votes(&$votes, $criteria = NULL) {
       if (isset($tmp->value)) {
         $tmp->value = NULL;
       }
-      votingapi_delete_votes(votingapi_select_votes($tmp));
+      votingapi_delete_votes($tmp->selectVotes());
     }
   } else {
     if (is_object($criteria)) {
       $criteria = array($criteria);
     }
     foreach ($criteria as $c) {
-      votingapi_delete_votes(votingapi_select_votes($c));
+      votingapi_delete_votes($c->selectVotes());
     }
   }
 
@@ -333,54 +384,6 @@ function votingapi_delete_results($vote_results = array()) {
     }
     db_delete('votingapi_cache')->condition('vote_cache_id', $vids, 'IN')->execute();
   }
-}
-
-/**
- * Select individual votes from the database.
- *
- * @param $criteria An object of type VotingApi_Criteria
- * @param $limit
- *   An optional integer specifying the maximum number of votes to return.
- * @return
- *   An array of votes matching the criteria.
- */
-function votingapi_select_votes($criteria = NULL, $limit = 0) {
-  if (!$criteria) $criteria = new VotingApi_Criteria();
-  $window = -1;
-  if ($criteria->uid == 0) {
-    if (!empty($criteria->vote_source)) {
-      $window = variable_get('votingapi_anonymous_window', 86400);
-    }
-  } else {
-    $window = variable_get('votingapi_user_window', -1);
-  }
-  if ($window >= 0) {
-    $criteria->timestamp = REQUEST_TIME - $window;
-  }
-  $function = variable_get('votingapi_storage_module', 'votingapi') . '_votingapi_storage_select_votes';
-  return $function($criteria, $limit);
-}
-
-/**
- * Select cached vote results from the database.
- *
- * @param $criteria a VotingApi_ResultCriteria object
- * @param $limit
- *   An optional integer specifying the maximum number of votes to return.
- * @return
- *   An array of vote results matching the criteria.
- */
-function votingapi_select_results($criteria = array(), $limit = 0) {
-  $query = db_select('votingapi_cache')->fields('votingapi_cache');
-  foreach ($criteria as $key => $value) {
-    $query->condition($key, $value, is_array($value) ? 'IN' : '=');
-  }
-  if (!empty($limit)) {
-    $query->range(0, $limit);
-  }
-  $result = $query->execute();
-  $result->fetchOptions['class_name'] = 'VotingApi_Result';
-  return $result->fetchAll(PDO::FETCH_CLASS);
 }
 
 /**
@@ -547,7 +550,7 @@ function votingapi_votingapi_storage_standard_results($entity_type, $entity_id) 
  * Retrieve the value of the first vote matching the criteria passed in.
  */
 function votingapi_select_single_vote_value($criteria = array()) {
-  if ($results = votingapi_select_votes($criteria, 1)) {
+  if ($results = $criteria->selectVotes(1)) {
     return $results[0]->value;
   }
 }
@@ -556,7 +559,7 @@ function votingapi_select_single_vote_value($criteria = array()) {
  * Retrieve the value of the first result matching the criteria passed in.
  */
 function votingapi_select_single_result_value($criteria = array()) {
-  if ($results = votingapi_select_results($criteria, 1)) {
+  if ($results = $criteria->selectVotes(1)) {
     return $results[0]->value;
   }
 }
