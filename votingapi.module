@@ -124,8 +124,28 @@ class VotingApi_Criteria extends VotingApi_Vote {
    * @return
    *   An array of votes matching the criteria.
    */
-  public function selectVotes($limit = 0) {
+  public function select($limit = 0) {
     return VotingApi_VoteStorage::get()->selectVotes($this, $limit);
+  }
+  
+  /**
+   * Delete all matching votes.
+   */
+  public function delete() {
+    VotingApi_Vote::deleteMultiple($this->select());
+  }
+  
+  public static function byEntity($entity_type, $entity_ids) {
+    $class = get_called_class();
+    return new $class(array('entity_type' => $entity_type, 'entity_id' => $entity_ids));
+  }
+  
+  /**
+   * Retrieve the value of the first vote matching the criteria.
+   */
+  public function singleValue() {
+    $results = $this->select();
+    return $results[0]->value;
   }
 }
 
@@ -142,6 +162,50 @@ class VotingApi_Result {
   public function __construct($data) {
     foreach ($data as $k => $v) {
       $this->$k = $v;
+    }
+  }
+  
+  /**
+   * Save this result to the database.
+   */
+  public function save() {
+    drupal_write_record('votingapi_cache', $vote_result);
+  }
+  
+  /**
+   * Save a bundle of vote results to the database.
+   *
+   * This function is called by votingapi_recalculate_results() after tallying
+   * the values of all cast votes on a piece of content. This function will be of
+   * little use for most third-party modules, unless they manually insert their
+   * own result data.
+   *
+   * @param vote_results array of VotingApi_Result objects
+   */
+  public static function saveMultiple($vote_results = array()) {
+    if (is_object($vote_results)) {
+      $vote_results = array($vote_results);
+    }
+
+    foreach ($vote_results as $vote_result) {
+      $vote_result->save();
+    }
+  }
+
+  /**
+   * Delete vote results from the database.
+   *
+   * @param $vote_results
+   *   An array of vote results to delete. Minimally, each vote result must have
+   *   the 'vote_cache_id' key set.
+   */
+  public static function deleteMultiple($vote_results = array()) {
+    if (!empty($vote_results)) {
+      $vids = array();
+      foreach ($vote_results as $vote) {
+        $vids[] = $vote->vote_cache_id;
+      }
+      db_delete('votingapi_cache')->condition('vote_cache_id', $vids, 'IN')->execute();
     }
   }
 }
@@ -161,13 +225,9 @@ class VotingApi_ResultCriteria extends VotingApi_Result {
    * @return
    *   An array of vote results matching the criteria.
    */
-  function selectResults($limit = 0) {
+  function select($limit = 0) {
     $query = db_select('votingapi_cache')->fields('votingapi_cache');
-    foreach ($this as $key => $value) {
-      if (!isset($value))
-        continue;
-      $query->condition($key, $value, is_array($value) ? 'IN' : '=');
-    }
+    $this->addConditions($query);
     if (!empty($limit)) {
       $query->range(0, $limit);
     }
@@ -175,7 +235,33 @@ class VotingApi_ResultCriteria extends VotingApi_Result {
     $result->fetchOptions['class_name'] = 'VotingApi_Result';
     return $result->fetchAll(PDO::FETCH_CLASS);
   }
+  
+  public static function byEntity($entity_type, $entity_ids) {
+    $class = get_called_class();
+    return new $class(array('entity_type' => $entity_type, 'entity_id' => $entity_ids));
+  }
 
+  protected function addConditions(&$query) {
+    foreach ($this as $key => $value) {
+      if (!isset($value))
+        continue;
+      $query->condition($key, $value, is_array($value) ? 'IN' : '=');
+    }
+  }
+  
+  public function delete() {
+    $query = db_delete('votingapi_cache');
+    $this->addConditions($query);
+    $query->execute();
+  }
+  
+  /**
+   * Retrieve the value of the first result matching the criteria.
+   */
+  public function singleValue() {
+    $results = $this->select();
+    return $results[0]->value;
+  }
 }
 
 class VotingApi_VoteStorage {
@@ -360,14 +446,14 @@ function votingapi_set_votes(&$votes, $criteria = NULL) {
       if (isset($tmp->value)) {
         $tmp->value = NULL;
       }
-      votingapi_delete_votes($tmp->selectVotes());
+      $tmp->delete();
     }
   } else {
     if (is_object($criteria)) {
       $criteria = array($criteria);
     }
     foreach ($criteria as $c) {
-      votingapi_delete_votes($c->selectVotes());
+      $c->delete();
     }
   }
 
@@ -388,42 +474,6 @@ function votingapi_set_votes(&$votes, $criteria = NULL) {
   return $touched;
 }
 
-/**
- * Save a bundle of vote results to the database.
- *
- * This function is called by votingapi_recalculate_results() after tallying
- * the values of all cast votes on a piece of content. This function will be of
- * little use for most third-party modules, unless they manually insert their
- * own result data.
- *
- * @param vote_results array of VotingApi_Result objects
- */
-function votingapi_add_results($vote_results = array()) {
-  if (is_object($vote_results)) {
-    $vote_results = array($vote_results);
-  }
-
-  foreach ($vote_results as $vote_result) {
-    drupal_write_record('votingapi_cache', $vote_result);
-  }
-}
-
-/**
- * Delete cached vote results from the database.
- *
- * @param $vote_results
- *   An array of vote results to delete. Minimally, each vote result must have
- *   the 'vote_cache_id' key set.
- */
-function votingapi_delete_results($vote_results = array()) {
-  if (!empty($vote_results)) {
-    $vids = array();
-    foreach ($vote_results as $vote) {
-      $vids[] = $vote->vote_cache_id;
-    }
-    db_delete('votingapi_cache')->condition('vote_cache_id', $vids, 'IN')->execute();
-  }
-}
 
 /**
  * Recalculates the aggregate results of all votes for a piece of content.
@@ -476,7 +526,7 @@ function votingapi_recalculate_results($entity_type, $entity_id, $force_calculat
         }
       }
     }
-    votingapi_add_results($cached);
+    VotingApi_Result::saveMultiple($cached);
 
     // Give other modules a chance to act on the results of the vote totaling.
     module_invoke_all('votingapi_results', $cached, $entity_type, $entity_id);
@@ -550,25 +600,6 @@ function votingapi_metadata($reset = FALSE) {
   return $data;
 }
 
-
-/**
- * Retrieve the value of the first vote matching the criteria passed in.
- */
-function votingapi_select_single_vote_value($criteria = array()) {
-  if ($results = $criteria->selectVotes(1)) {
-    return $results[0]->value;
-  }
-}
-
-/**
- * Retrieve the value of the first result matching the criteria passed in.
- */
-function votingapi_select_single_result_value($criteria = array()) {
-  if ($results = $criteria->selectVotes(1)) {
-    return $results[0]->value;
-  }
-}
-
 /**
  * Implements hook_entity_delete().
  *
@@ -577,38 +608,6 @@ function votingapi_select_single_result_value($criteria = array()) {
 function votingapi_entity_delete($entity, $type) {
   $ids = entity_extract_ids($type, $entity);
   $id = array($ids[0]);
-  _votingapi_delete_cache_by_entity($id, $type);
-  _votingapi_delete_votes_by_entity($id, $type);
-}
-
-/**
- * Helper function to delete all cache entries on given entities.
- *
- * @param array entity ids
- * @param string entity type
- */
-function _votingapi_delete_cache_by_entity($entity_ids, $type) {
-  $result = db_select('votingapi_cache', 'v')
-    ->fields('v', array('vote_cache_id'))
-    ->condition('entity_type', $type)
-    ->condition('entity_id', $entity_ids)
-    ->execute();
-  $result->fetchOptions['class_name'] = 'VotingApi_Result';
-  votingapi_delete_results($result->fetchAll(PDO::FETCH_CLASS));
-}
-
-/**
- * Helper function to delete all votes on given entities.
- *
- * @param array entity ids
- * @param string entity type
- */
-function _votingapi_delete_votes_by_entity($entity_ids, $type) {
-  $result = db_select('votingapi_vote', 'v')
-    ->fields('v', array('vote_id', 'entity_type', 'entity_id'))
-    ->condition('entity_type', $type)
-    ->condition('entity_id', $entity_ids)
-    ->execute();
-  $result->fetchOptions['class_name'] = 'VotingApi_Vote';
-  VotingApi_Vote::deleteMultiple($result->fetchAll(PDO::FETCH_CLASS));
+  VotingApi_ResultCriteria::byEntity($type, $ids)->delete();
+  VotingApi_Criteria::byEntity($type, $ids)->delete();
 }
