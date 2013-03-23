@@ -120,77 +120,65 @@ function hook_votingapi_views_formatters($field) {
 }
 
 /**
- * Save a vote in the database.
- *
- * @param $vote
- *   See votingapi_add_votes() for the structure of this array, with the
- *   defaults loaded from votingapi_prep_vote().
+ * VotingApi's vote storage can be overriden by pointing setting the
+ * 'votingapi_vote_storage' variable to an alternative class.
  */
-function hook_votingapi_storage_add_vote(&$vote) {
-  _mongodb_votingapi_prepare_vote($criteria);
-  mongodb_collection('votingapi_vote')->insert($vote);
-}
+variable_set('votingapi_vote_storage', 'Mongodb_VoteStorage');
+ 
+class Mongodb_VoteStorage {
 
-/**
- * Delete votes from the database.
- *
- * @param $votes
- *   An array of votes to delete. Minimally, each vote must have the 'vote_id'
- *   key set.
- * @param $vids
- *   A list of the 'vote_id' values from $voes.
- */
-function hook_votingapi_storage_delete_votes($votes, $vids) {
-  mongodb_collection('votingapi_vote')->delete(array('vote_id' => array('$in' => array_map('intval', $vids))));
-}
+  /**
+   * Save a vote in the database.
+   *
+   * @param $vote instance of VotingApi_Vote.
+   */
+  function addVote(&$vote) {
+    mongodb_collection('votingapi_vote')->insert($vote);
+  }
 
-/**
- * Select invidual votes from the database
- *
-/**
- * Select individual votes from the database.
- *
- * @param $criteria
- *   A keyed array used to build the select query. Keys can contain
- *   a single value or an array of values to be matched.
- *   $criteria['vote_id']       (If this is set, all other keys are skipped)
- *   $criteria['entity_id']
- *   $criteria['entity_type']
- *   $criteria['value_type']
- *   $criteria['tag']
- *   $criteria['uid']
- *   $criteria['vote_source']
- *   $criteria['timestamp']   If this is set, records with timestamps
- *      GREATER THAN the set value will be selected. Defaults to
- *      REQUEST_TIME - variable_get('votingapi_anonymous_window', 3600); if
- *      the anonymous window is above zero.
- * @param $limit
- *   An integer specifying the maximum number of votes to return. 0 means
- *   unlimited and is the default.
- * @return
- *   An array of votes matching the criteria.
- */
-function hook_votingapi_storage_select_votes($criteria, $limit) {
-  _mongodb_votingapi_prepare_vote($criteria);
-  $find = array();
-  foreach ($criteria as $key => $value) {
-    $find[$key] = is_array($value) ? array('$in' => $value) : $value;
+  /**
+   * Delete votes from the database.
+   *
+   * @param $votes An array of VotingApi_Vote instances to delete.
+   *   Minimally, each vote must have the 'vote_id' key set.
+   * @param $vids
+   *   A list of the 'vote_id' values from $votes.
+   */
+  function deleteVotes($votes, $vids) {
+    mongodb_collection('votingapi_vote')->delete(array('vote_id' => array('$in' => array_map('intval', $vids))));
   }
-  $cursor = mongodb_collection('votingapi_vote')->find($find);
-  if (!empty($limit)) {
-    $cursor->limit($limit);
-  }
-  $votes = array();
-  foreach ($cursor as $vote) {
-    $votes[] = $vote;
-  }
-  return $votes;
-}
 
-/**
- * TODO
- *
- */
-function hook_votingapi_storage_standard_results($entity_id, $entity) {
-  // TODO
+  /**
+   * Select individual votes from the database.
+   *
+   * @param $criteria instance of VotingApi_Criteria.
+   * @param $limit
+   *   An integer specifying the maximum number of votes to return. 0 means
+   *   unlimited and is the default.
+   * @return
+   *   An array of VotingApi_Vote objects matching the criteria.
+   */
+  function selectVotes($criteria, $limit) {
+    $find = array();
+    foreach ($criteria as $key => $value) {
+      $find[$key] = is_array($value) ? array('$in' => $value) : $value;
+    }
+    $cursor = mongodb_collection('votingapi_vote')->find($find);
+    if (!empty($limit)) {
+      $cursor->limit($limit);
+    }
+    $votes = array();
+    foreach ($cursor as $vote) {
+      $votes[] = $vote;
+    }
+    return $votes;
+  }
+
+  /**
+   * TODO
+   *
+   */
+  function standardResults($entity_id, $entity) {
+    // TODO
+  }
 }
