@@ -339,19 +339,10 @@ class VotingApi_VoteStorage {
  
 /**
  * Implements of hook_menu().
+ * @todo TBD
  */
-function votingapi_menu() {
+function _votingapi_menu() {
   $items = array();
-  $items['admin/config/search/votingapi'] = array(
-    'title' => 'Voting API',
-    'description' => 'Configure sitewide settings for user-generated ratings and votes.',
-    'page callback' => 'drupal_get_form',
-    'page arguments' => array('votingapi_settings_form'),
-    'access callback' => 'user_access',
-    'access arguments' => array('administer voting api'),
-    'file' => 'votingapi.admin.inc',
-    'type' => MENU_NORMAL_ITEM
-  );
 
   if (module_exists('devel_generate')) {
     $items['admin/config/development/generate/votingapi'] = array(
@@ -372,19 +363,10 @@ function votingapi_menu() {
  */
 function votingapi_permission() {
   return array(
-      'administer voting api' => array(
-          'title' => t('Administer Voting API'),
-      ),
-  );
-}
-
-/**
- * Implements of hook_views_api().
- */
-function votingapi_views_api() {
-  return array(
-    'api' => 3,
-    'path' => drupal_get_path('module', 'votingapi') . '/views',
+    'administer voting api' => array(
+      'title' => t('Administer Voting API'),
+      'restrict access' => TRUE,
+    ),
   );
 }
 
@@ -392,8 +374,9 @@ function votingapi_views_api() {
  * Implements of hook_cron().
  *
  * Allows db-intensive recalculations to be deferred until cron-time.
+ * @todo TBD
  */
-function votingapi_cron() {
+function _votingapi_cron() {
   if (variable_get('votingapi_calculation_schedule', 'immediate') == 'cron') {
     $time = REQUEST_TIME;
     $last_cron = variable_get('votingapi_last_cron', 0);

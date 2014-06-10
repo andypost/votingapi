@@ -1,0 +1,7 @@
+votingapi.admin_overview:
+  path: '/admin/config/search/votingapi'
+  defaults:
+    _title: 'Voting API'
+    _form: '\Drupal\votingapi\Form\SettingsForm'
+  requirements:
+    _permission: 'administer voting api'
