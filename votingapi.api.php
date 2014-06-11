@@ -121,9 +121,9 @@ function hook_votingapi_views_formatters($field) {
 
 /**
  * VotingApi's vote storage can be overriden by pointing setting the
- * 'votingapi_vote_storage' variable to an alternative class.
+ * 'votingapi_vote_storage' state to an alternative class.
  */
-variable_set('votingapi_vote_storage', 'Mongodb_VoteStorage');
+\Drupal::state()->set('votingapi_vote_storage', 'Mongodb_VoteStorage');
  
 class Mongodb_VoteStorage {
 

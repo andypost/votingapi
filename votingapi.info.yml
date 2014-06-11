@@ -1,0 +1,6 @@
+name: "Voting API"
+type: module
+description: "Provides a shared voting API for other modules."
+package: Voting
+core: 8.x
+configure: votingapi.admin_overview

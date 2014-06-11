@@ -43,8 +43,10 @@ class VotingApi_Vote {
    * Remember that any module calling this function implicitly assumes responsibility
    * for calling votingapi_recalculate_results() when all votes have been inserted.
    *
-   * @param $votes array of VotingApi_Vote instances
-   * @return
+   * @param array $votes
+   *   An array of VotingApi_Vote instances
+   *
+   * @return array
    *   The same votes, with vote_id keys populated.
    *
    * @see votingapi_set_votes()
@@ -63,7 +65,8 @@ class VotingApi_Vote {
   /**
    * Delete votes from the database.
    *
-   * @param $votes An array of votes to delete. Each vote must have the 'vote_id' key set.
+   * @param array $votes
+   *   An array of votes to delete. Each vote must have the 'vote_id' key set.
    */
   public static function deleteMultiple($votes = array()) {
     if (!empty($votes)) {
@@ -106,10 +109,10 @@ class VotingApi_Criteria extends VotingApi_Vote {
     $window = -1;
     if ($this->uid == 0) {
       if (!empty($this->vote_source)) {
-        $window = variable_get('votingapi_anonymous_window', 86400);
+        $window = \Drupal::config('votingapi.settings')->get('anonymous_window', 86400);
       }
     } else {
-      $window = variable_get('votingapi_user_window', -1);
+      $window = \Drupal::config('votingapi.settings')->get('user_window', -1);
     }
     if ($window >= 0) {
       $this->timestamp = REQUEST_TIME - $window;
@@ -119,8 +122,9 @@ class VotingApi_Criteria extends VotingApi_Vote {
   /**
    * Select individual votes from the database.
    *
-   * @param $limit
+   * @param int $limit
    *   An optional integer specifying the maximum number of votes to return.
+   *
    * @return
    *   An array of votes matching the criteria.
    */
@@ -180,7 +184,8 @@ class VotingApi_Result {
    * little use for most third-party modules, unless they manually insert their
    * own result data.
    *
-   * @param vote_results array of VotingApi_Result objects
+   * @param array $vote_results
+   *   An array of VotingApi_Result objects
    */
   public static function saveMultiple($vote_results = array()) {
     if (is_object($vote_results)) {
@@ -195,7 +200,7 @@ class VotingApi_Result {
   /**
    * Delete vote results from the database.
    *
-   * @param $vote_results
+   * @param array $vote_results
    *   An array of vote results to delete. Minimally, each vote result must have
    *   the 'vote_cache_id' key set.
    */
@@ -217,12 +222,14 @@ class VotingApi_Result {
  * timestamp is interpreted as the vote-rollover.
  */
 class VotingApi_ResultCriteria extends VotingApi_Result {
+
   /**
    * Select cached vote results from the database.
    *
-   * @param $limit
+   * @param int $limit
    *   An optional integer specifying the maximum number of votes to return.
-   * @return
+   *
+   * @return array
    *   An array of vote results matching the criteria.
    */
   function select($limit = 0) {
@@ -269,7 +276,7 @@ class VotingApi_VoteStorage {
   
   public static function get() {
     if (!self::$instance) {
-      $class = variable_get('votingapi_vote_storage', 'VotingApi_VoteStorage');
+      $class = \Drupal::state()->get('votingapi_vote_storage', 'VotingApi_VoteStorage');
       self::$instance = new $class;
     }
     return self::$instance;
@@ -339,7 +346,8 @@ class VotingApi_VoteStorage {
  
 /**
  * Implements of hook_menu().
- * @todo TBD
+ *
+ * @todo Integrate with devel module.
  */
 function _votingapi_menu() {
   $items = array();
@@ -374,18 +382,17 @@ function votingapi_permission() {
  * Implements of hook_cron().
  *
  * Allows db-intensive recalculations to be deferred until cron-time.
- * @todo TBD
  */
-function _votingapi_cron() {
-  if (variable_get('votingapi_calculation_schedule', 'immediate') == 'cron') {
+function votingapi_cron() {
+  if (\Drupal::config('votingapi.settings')->get('calculation_schedule') == 'cron') {
     $time = REQUEST_TIME;
-    $last_cron = variable_get('votingapi_last_cron', 0);
+    $last_cron = \Drupal::state()->get('votingapi_last_cron', 0);
     $result = db_query('SELECT DISTINCT entity_type, entity_id FROM {votingapi_vote} WHERE timestamp > :timestamp', array(':timestamp' => $last_cron));
     foreach ($result as $content) {
       votingapi_recalculate_results($content->entity_type, $content->entity_id, TRUE);
     }
 
-    variable_set('votingapi_last_cron', $time);
+    \Drupal::state()->set('votingapi_last_cron', $time);
   }
 }
 
@@ -400,13 +407,16 @@ function _votingapi_cron() {
  * Modules that need more explicit control can call VotingApi_Vote::saveMultiple() and
  * manage the deletion/recalculation tasks manually.
  *
- * @param $votes An array of (or a single) VotingApi_Vote objects
- * @param $criteria An array of (or a single) VotingApi_Criteria objects used to determine what
+ * @param array|object $votes
+ *   An array of (or a single) VotingApi_Vote objects
+ * @param array $criteria
+ *   An array of (or a single) VotingApi_Criteria objects used to determine what
  *   votes will be deleted when the current vote is cast. If no value is specified,
  *   all votes for the current content by the current user will be reset. If an empty object is
  *   passed in, no votes will be reset and all incoming votes will be saved IN ADDITION to
  *   existing ones.
- * @return
+ *
+ * @return array
  *   An array of vote result records affected by the vote. The values are
  *   contained in a nested array keyed thusly:
  *   $value = $results[$entity_type][$entity_id][$tag][$value_type][$function]
@@ -447,7 +457,7 @@ function votingapi_set_votes(&$votes, $criteria = NULL) {
     $touched[$vote->entity_type][$vote->entity_id] = TRUE;
   }
 
-  if (variable_get('votingapi_calculation_schedule', 'immediate') != 'cron') {
+  if (\Drupal::config('votingapi.settings')->get('calculation_schedule') != 'cron') {
     foreach ($touched as $type => $ids) {
       foreach ($ids as $id => $bool) {
         $touched[$type][$id] = votingapi_recalculate_results($type, $id);
@@ -466,12 +476,15 @@ function votingapi_set_votes(&$votes, $criteria = NULL) {
  * responsibility for the full voting cycle: the votingapi_set_vote() function
  * recalculates automatically.
  *
- * @param $entity_type
+ * @param string $entity_type
  *   A string identifying the type of content being rated. Node, comment,
  *   aggregator item, etc.
- * @param $entity_id
+ * @param int $entity_id
  *   The key ID of the content being rated.
- * @return
+ * @param boolean $force_calculation
+ *   Force recalculation of results.
+ *
+ * @return array
  *   An array of the resulting votingapi_cache records, structured thusly:
  *   $value = $results[$ag][$value_type][$function]
  *
@@ -481,8 +494,8 @@ function votingapi_recalculate_results($entity_type, $entity_id, $force_calculat
   // if we're operating in cron mode, and the 'force recalculation' flag is NOT set,
   // bail out. The cron run will pick up the results.
 
-  if (variable_get('votingapi_calculation_schedule', 'immediate') != 'cron' || $force_calculation == TRUE) {
-    $query = db_delete('votingapi_cache')
+  if (\Drupal::config('votingapi.settings')->get('calculation_schedule') != 'cron' || $force_calculation == TRUE) {
+    \Drupal::database()->delete('votingapi_cache')
       ->condition('entity_type', $entity_type)
       ->condition('entity_id', $entity_id)
       ->execute();
@@ -491,7 +504,7 @@ function votingapi_recalculate_results($entity_type, $entity_id, $force_calculat
     $cache = VotingApi_VoteStorage::get()->standardResults($entity_type, $entity_id);
 
     // Give other modules a chance to alter the collection of votes.
-    drupal_alter('votingapi_results', $cache, $entity_type, $entity_id);
+    \Drupal::moduleHandler()->alter('votingapi_results', $cache, $entity_type, $entity_id);
 
     // Now, do the caching. Woo.
     $cached = array();
@@ -535,7 +548,10 @@ function votingapi_recalculate_results($entity_type, $entity_id, $force_calculat
  *
  * This metadata can be modified or expanded using hook_votingapi_metadata_alter().
  *
- * @return
+ * @param bool $reset
+ *   Force get a fresh data.
+ *
+ * @return array
  *   An array of metadata defined by VotingAPI and altered by vote modules.
  *
  * @see hook_votingapi_metadata_alter()
@@ -577,7 +593,7 @@ function votingapi_metadata($reset = FALSE) {
       ),
     );
 
-    drupal_alter('votingapi_metadata', $data);
+    \Drupal::moduleHandler()->alter('votingapi_metadata', $data);
   }
 
   return $data;
@@ -588,9 +604,9 @@ function votingapi_metadata($reset = FALSE) {
  *
  * Delete all votes and cache entries for the deleted entities
  */
-function votingapi_entity_delete($entity, $type) {
-  $ids = entity_extract_ids($type, $entity);
-  $id = array($ids[0]);
+function votingapi_entity_delete(\Drupal\Core\Entity\EntityInterface $entity) {
+  $ids = array($entity->id());
+  $type = $entity->getEntityTypeId();
   VotingApi_ResultCriteria::byEntity($type, $ids)->delete();
   VotingApi_Criteria::byEntity($type, $ids)->delete();
 }
